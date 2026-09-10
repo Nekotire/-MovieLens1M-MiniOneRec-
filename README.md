@@ -122,8 +122,7 @@ bash run.sh --from-stage 8
 
 RL 不是本次结果的一部分，仓库里也没有任何 RL 指标。当前代码的思路是：从 SFT `final_checkpoint` 出发，用 GRPO 做 recommendation-oriented post-training。`reward_type=ranking` 时同时使用 exact-hit reward 和组内排名/NDCG 风格 reward；每个 prompt 生成多个候选，在组内比较 reward，再结合 reference model / KL 约束更新 policy。
 
-为了避免“README 写得像跑过一样”，RL 的数据构造、reward、GRPO 参数、建议的 5k→20k 分阶段实验方式都单独写在 [`docs/RL_EXTENSION.md`](docs/RL_EXTENSION.md)。后续真跑之后，再补 RL vs SFT 的同协议 HR/NDCG 对比。
-
+RL 的数据构造、reward、GRPO 参数、建议的 5k→20k 分阶段实验方式都单独写在 [`docs/RL_EXTENSION.md`](docs/RL_EXTENSION.md)。
 ## 仓库怎么读
 
 核心链路只需要先看这些文件：
