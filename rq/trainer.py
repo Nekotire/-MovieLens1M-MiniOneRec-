@@ -101,6 +101,7 @@ class Trainer(object):
 
         total_loss = 0
         total_recon_loss = 0
+        total_quant_loss = 0
         iter_data = tqdm(
                     train_data,
                     total=len(train_data),
@@ -121,8 +122,9 @@ class Trainer(object):
             # print(self.scheduler.get_last_lr())
             total_loss += loss.item()
             total_recon_loss += loss_recon.item()
+            total_quant_loss += rq_loss.mean().item()
 
-        return total_loss, total_recon_loss
+        return total_loss, total_recon_loss, total_quant_loss
 
     @torch.no_grad()
     def _valid_epoch(self, valid_data):
@@ -171,7 +173,7 @@ class Trainer(object):
 
         return ckpt_path
 
-    def _generate_train_loss_output(self, epoch_idx, s_time, e_time, loss, recon_loss):
+    def _generate_train_loss_output(self, epoch_idx, s_time, e_time, loss, recon_loss, quant_loss):
         train_loss_output = (
             set_color("epoch %d training", "green")
             + " ["
@@ -181,6 +183,8 @@ class Trainer(object):
         train_loss_output += set_color("train loss", "blue") + ": %.4f" % loss
         train_loss_output +=", "
         train_loss_output += set_color("reconstruction loss", "blue") + ": %.4f" % recon_loss
+        train_loss_output +=", "
+        train_loss_output += set_color("quantization loss", "blue") + ": %.4f" % quant_loss
         return train_loss_output + "]"
 
 
@@ -191,10 +195,10 @@ class Trainer(object):
         for epoch_idx in range(self.epochs):
             # train
             training_start_time = time()
-            train_loss, train_recon_loss = self._train_epoch(data, epoch_idx)
+            train_loss, train_recon_loss, train_quant_loss = self._train_epoch(data, epoch_idx)
             training_end_time = time()
             train_loss_output = self._generate_train_loss_output(
-                epoch_idx, training_start_time, training_end_time, train_loss, train_recon_loss
+                epoch_idx, training_start_time, training_end_time, train_loss, train_recon_loss, train_quant_loss
             )
             self.logger.info(train_loss_output)
 
@@ -249,7 +253,6 @@ class Trainer(object):
 
 
         return self.best_loss, self.best_collision_rate
-
 
 
 

@@ -1,0 +1,20 @@
+# PyTorch is intentionally installed separately from the official cu124 index in setup.sh.
+# These versions match the APIs used by the upstream MiniOneRec code.
+accelerate==1.10.1
+bitsandbytes==0.48.1
+datasets==4.2.0
+deepspeed==0.18.0
+einops==0.8.0
+fire==0.7.1
+numpy==1.26.3
+pandas==2.2.2
+peft==0.17.1
+PyYAML==6.0.1
+requests==2.32.3
+scikit-learn==1.5.2
+scipy==1.14.0
+transformers==4.57.1
+trl==0.24.0
+tqdm==4.67.1
+wandb==0.22.2
+pytest==8.3.5

@@ -61,6 +61,7 @@ from transformers import (
     )
 
 from LogitProcessor import ConstrainedLogitsProcessor
+from minionerec_utils.constrained_decoding import build_sid_prefix_tree
 from transformers.generation import LogitsProcessor
 import math
 
@@ -529,7 +530,7 @@ class ReReTrainer(Trainer):
         with open(self.info_file, 'r') as f:
             info = f.readlines()
             # Parse new format: semantic_id \t item_title \t item_id
-            semantic_ids = [line.split('\t')[0].strip() + "\n" for line in info]
+            semantic_ids = [line.split('\t')[0].strip() for line in info]
             item_titles = [line.split('\t')[1].strip() + "\n" for line in info if len(line.split('\t')) >= 2]
             
             # Format for tokenization
@@ -544,32 +545,7 @@ class ReReTrainer(Trainer):
         #     info = [f'''### Response:\n{_}''' for _ in info]
 
         tokenizer = AutoTokenizer.from_pretrained(self.base_model)
-        if self.base_model.lower().find("llama") > -1: 
-            prefixID = [tokenizer(_).input_ids[1:] for _ in info]
-        else:
-            prefixID = [tokenizer(_).input_ids for _ in info]
-        
-        if self.base_model.lower().find("gpt2") > -1:
-            prefix_index = 4
-        else:
-            prefix_index = 3
-            
-        self.hash_dict = dict()
-        # sasrec_dict = dict()
-        for index, ID in enumerate(prefixID):
-            ID.append(tokenizer.eos_token_id)
-            for i in range(prefix_index, len(ID)):
-                if i == prefix_index:
-                    hash_number = self.get_hash(ID[:i])
-                else:
-                    hash_number = self.get_hash(ID[prefix_index:i])
-                if hash_number not in self.hash_dict:
-                    self.hash_dict[hash_number] = set()
-                    # sasrec_dict[hash_number] = set()
-                self.hash_dict[hash_number].add(ID[i])
-
-        for key in self.hash_dict.keys():
-            self.hash_dict[key] = list(self.hash_dict[key])
+        self.sid_prefix_tree = build_sid_prefix_tree(tokenizer, semantic_ids)
 
         self.test_generation_config = GenerationConfig(max_new_tokens=self.max_completion_length,
                                                             length_penalty=self.length_penalty,
@@ -586,10 +562,7 @@ class ReReTrainer(Trainer):
             return '-'.join(x)
 
     def prefix_allowed_tokens_fn(self, batch_id, input_ids):
-            hash_number = self.get_hash(input_ids)
-            if hash_number in self.hash_dict:
-                return self.hash_dict[hash_number]
-            return []
+            return self.sid_prefix_tree.allowed(input_ids)
     
     def _set_signature_columns_if_needed(self):
         # If `self.args.remove_unused_columns` is True, non-signature columns are removed.
@@ -693,7 +666,7 @@ class ReReTrainer(Trainer):
                 # cf_dict=sasrec_dict,
                 # unconditional_ids=None,
                 num_beams=self.num_generations if self.beam_search else 1,
-                base_model=self.base_model,
+                prompt_lengths=prompt_ids.shape[1],
                 eos_token_id=self.processing_class.eos_token_id
             )
         self.logits_processor = LogitsProcessorList([TemperatureLogitsWarper(temperature=self.temperature), ccc])

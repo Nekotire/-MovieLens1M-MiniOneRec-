@@ -1,37 +1,14 @@
-#!/bin/bash
-#
-# RQ-KMeans Constrained Training Script
-#
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
 
-# Default parameters
-DATASET="Industrial_and_Scientific"
-ROOT="../data/Amazon18/$DATASET"
-K=256
-L=3
-MAX_ITER=100
-SEED=42
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --dataset) DATASET="$2"; shift 2 ;;
-        --root) ROOT="$2"; shift 2 ;;
-        --k) K="$2"; shift 2 ;;
-        --l) L="$2"; shift 2 ;;
-        --max_iter) MAX_ITER="$2"; shift 2 ;;
-        --seed) SEED="$2"; shift 2 ;;
-        *) echo "Unknown: $1"; exit 1 ;;
-    esac
-done
-
-echo "Dataset: $DATASET"
-echo "K=$K, L=$L"
+DATA_ROOT="${DATA_ROOT:-/data}"
+DATASET="${DATASET:-MovieLens1M}"
+PROCESSED_DIR="${PROCESSED_DIR:-$DATA_ROOT/datasets/MovieLens1M/processed}"
+EMBEDDING_PATH="${EMBEDDING_PATH:-$PROCESSED_DIR/$DATASET.emb.npy}"
 
 python rqkmeans_constrained.py \
-    --dataset "$DATASET" \
-    --root "$ROOT" \
-    --k "$K" \
-    --l "$L" \
-    --max_iter "$MAX_ITER" \
-    --seed "$SEED" \
-    --verbose
+  --dataset "$DATASET" \
+  --root "$PROCESSED_DIR" \
+  --data_path "$EMBEDDING_PATH" \
+  "$@"

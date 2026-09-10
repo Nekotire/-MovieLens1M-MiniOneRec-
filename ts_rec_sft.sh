@@ -1,37 +1,21 @@
-#!/bin/bash
-export NCCL_IB_DISABLE=1        # 完全禁用 IB/RoCE
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
 
-DATASET="Industrial_and_Scientific"
-# DATASET="Office_Products"
-# DATASET="Toys_and_Games"
+DATA_ROOT="${DATA_ROOT:-/data}"
+DATASET="${DATASET:-MovieLens1M}"
+MINIONEREC_DIR="${MINIONEREC_DIR:-$DATA_ROOT/datasets/MovieLens1M/minionerec}"
+PROCESSED_DIR="${PROCESSED_DIR:-$DATA_ROOT/datasets/MovieLens1M/processed}"
+MODEL="${MODEL:-Qwen/Qwen2.5-1.5B}"
+: "${TS_DESCRIPTION_PATH:?Set TS_DESCRIPTION_PATH to a MovieLens SID keyword JSON file}"
 
-MODEL="Qwen2.5-1.5B"
-
-for category in $DATASET; do
-    
-    train_file=$(ls -f ./data/Amazon/train/${category}*11.csv)
-    eval_file=$(ls -f ./data/Amazon/valid/${category}*11.csv)
-    test_file=$(ls -f ./data/Amazon/test/${category}*11.csv)
-    info_file=$(ls -f ./data/Amazon/info/${category}*.txt)
-    
-    echo ${train_file} ${eval_file} ${info_file} ${test_file}
-    
-    torchrun --nproc_per_node 8 \
-            sft.py \
-            --base_model ${MODEL} \
-            --batch_size 1024 \
-            --micro_batch_size 16 \
-            --train_file ${train_file} \
-            --eval_file ${eval_file} \
-            --output_dir ${MODEL}_ts_rec_sft_${category} \
-            --wandb_project MiniOneRec_SFT \
-            --wandb_run_name ${MODEL}_ts_rec_sft_${category} \
-            --category ${category} \
-            --train_from_scratch False \
-            --seed 42 \
-            --sid_index_path ./data/Amazon/index/${category}.index.json \
-            --item_meta_path ./data/Amazon/index/${category}.item.json \
-            --freeze_LLM False \
-            --description_path ./data/Amazon/${category}.description_keywords_rqvae.json \
-            --learning_rate 3e-4
-done
+python ts_rec_sft.py \
+  --base_model "$MODEL" \
+  --train_file "$MINIONEREC_DIR/train/$DATASET.csv" \
+  --eval_file "$MINIONEREC_DIR/valid/$DATASET.csv" \
+  --output_dir "$DATA_ROOT/output/MovieLens1M/ts_rec_sft" \
+  --category "$DATASET" \
+  --sid_index_path "$PROCESSED_DIR/$DATASET.index.json" \
+  --item_meta_path "$PROCESSED_DIR/$DATASET.item.json" \
+  --description_path "$TS_DESCRIPTION_PATH" \
+  "$@"

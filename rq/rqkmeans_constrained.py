@@ -167,8 +167,9 @@ def analyze_codes(codes, title="", verbose=True):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Constrained RQ-KMeans clustering")
-    parser.add_argument('--root', type=str, default="./data/Amazon", help="Root directory for data")
-    parser.add_argument("--dataset", type=str, required=True, help="Dataset name (e.g., Industrial_and_Scientific)")
+    parser.add_argument('--root', type=str, default=None, help="Processed dataset directory")
+    parser.add_argument("--dataset", type=str, default="MovieLens1M", help="Dataset name")
+    parser.add_argument("--data_path", type=str, default=None, help="Explicit .npy embedding path")
     parser.add_argument("--k", type=int, default=256, help="Number of clusters per level")
     parser.add_argument("--l", type=int, default=4, help="Number of levels")
     parser.add_argument("--max_iter", type=int, default=100, help="Maximum number of iterations")
@@ -192,9 +193,11 @@ if __name__ == "__main__":
     print("=" * 60)
 
     t0 = time.time()
+    if args.root is None:
+        args.root = os.path.join(os.environ.get("DATA_ROOT", "/data"), "datasets", "MovieLens1M", "processed")
     print("root: ", args.root)
     print("dataset: ", args.dataset)
-    data_path = os.path.join(args.root, args.dataset + '.emb-qwen-td.npy')
+    data_path = args.data_path or os.path.join(args.root, args.dataset + '.emb.npy')
 
     if not os.path.exists(data_path):
         print(f"Error: Data file not found: {data_path}")

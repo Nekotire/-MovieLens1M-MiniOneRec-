@@ -16,6 +16,7 @@ import math
 import warnings
 from functools import partial
 from torch.optim.lr_scheduler import LambdaLR
+from minionerec_utils.dataset_config import category_name
 import json
 import bitsandbytes as bnb
 from ts_rec_data import SidSFTDataset, SidItemFeatDataset, FusionSeqRecDataset, SidTokenFeatDataset
@@ -122,7 +123,7 @@ def train(
     wandb_project: str = "",
     wandb_run_name: str = "",
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
-    category: str="",
+    category: str="MovieLens1M",
     train_from_scratch: bool = False,
     sid_index_path: str = "",
     item_meta_path: str = "",
@@ -131,11 +132,8 @@ def train(
     set_seed(seed)
     os.environ['WANDB_PROJECT'] = wandb_project
 
-    category_dict = {"Industrial_and_Scientific": "industrial and scientific", "Office_Products": "office products", "Toys_and_Games": "toys and games", "Books": "books"}
-
     print(category)
-    category_tmp = category
-    category = category_dict[category]
+    category = category_name(category)
     assert (
         base_model
     ), "Please specify a --base_model, e.g. --base_model='decapoda-research/llama-7b-hf'"

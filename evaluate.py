@@ -7,6 +7,8 @@ import os
 from transformers import GenerationConfig,  AutoTokenizer, BitsAndBytesConfig, AutoModelForCausalLM, LogitsProcessorList, TemperatureLogitsWarper
 from data import  EvalD3Dataset, EvalSidDataset
 from LogitProcessor import ConstrainedLogitsProcessor
+from minionerec_utils.constrained_decoding import build_sid_prefix_tree
+from minionerec_utils.dataset_config import category_name
 from accelerate import Accelerator
 import random
 import bitsandbytes as bnb
@@ -39,7 +41,7 @@ def main(
     base_model: str = "",
     train_file: str = "",
     info_file: str = "",
-    category: str = "",
+    category: str = "MovieLens1M",
     test_data_path: str = "",
     result_json_data: str = "",
     batch_size: int = 4,
@@ -51,9 +53,7 @@ def main(
 ):
     random.seed(seed)
     set_seed(seed)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    category_dict = {"Industrial_and_Scientific": "industrial and scientific items", "Office_Products": "office products", "Toys_and_Games": "toys and games", "Sports": "sports and outdoors", "Books": "books"}
-    category = category_dict[category]
+    category = category_name(category)
     print(category)
 
     model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch.bfloat16, device_map="auto")
@@ -61,7 +61,7 @@ def main(
     with open(info_file, 'r') as f:
         info = f.readlines()
         # Parse new format: semantic_id \t item_title \t item_id
-        semantic_ids = [line.split('\t')[0].strip() + "\n" for line in info]
+        semantic_ids = [line.split('\t')[0].strip() for line in info]
         item_titles = [line.split('\t')[1].strip() + "\n" for line in info if len(line.split('\t')) >= 2]
         
         # Format for tokenization
@@ -71,69 +71,10 @@ def main(
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     
-    # Create prefixID for semantic IDs (existing functionality)
-    if base_model.lower().find("llama") > -1:
-        prefixID = [tokenizer(_).input_ids[1:] for _ in info_semantic]
-        prefixTitleID = [tokenizer(_).input_ids[1:] for _ in info_titles]
-    else:
-        prefixID = [tokenizer(_).input_ids for _ in info_semantic]
-        prefixTitleID = [tokenizer(_).input_ids for _ in info_titles]
-    if base_model.lower().find("gpt2") > -1:
-        prefix_index = 4
-    else:
-        prefix_index = 3
-    
-    # Build hash_dict for semantic IDs (existing functionality)
-    hash_dict = dict()
-    # print(f"eos token: {tokenizer.eos_token_id}")
-    for index, ID in enumerate(prefixID):
-        ID.append(tokenizer.eos_token_id)
-        for i in range(prefix_index, len(ID)):
-            if i == prefix_index:
-                hash_number = get_hash(ID[:i])
-            else:
-                hash_number = get_hash(ID[prefix_index:i])
-            if hash_number not in hash_dict:
-                hash_dict[hash_number] = set()
-            hash_dict[hash_number].add(ID[i])
-        hash_number = get_hash(ID[prefix_index:])
+    sid_tree = build_sid_prefix_tree(tokenizer, semantic_ids)
 
-    # Build hash_dict_title for item titles (new functionality)
-    hash_dict_title = dict()
-    for index, ID in enumerate(prefixTitleID):
-        ID.append(tokenizer.eos_token_id)
-        for i in range(prefix_index, len(ID)):
-            if i == prefix_index:
-                hash_number = get_hash(ID[:i])
-            else:
-                hash_number = get_hash(ID[prefix_index:i])
-            if hash_number not in hash_dict_title:
-                hash_dict_title[hash_number] = set()
-            hash_dict_title[hash_number].add(ID[i])
-        hash_number = get_hash(ID[prefix_index:])
-
-    # Convert sets to lists for both dictionaries
-    for key in hash_dict.keys():
-        hash_dict[key] = list(hash_dict[key])
-    for key in hash_dict_title.keys():
-        hash_dict_title[key] = list(hash_dict_title[key])
-
-    # Define prefix constraint functions
-    def prefix_allowed_tokens_fn_semantic(batch_id, input_ids):
-        hash_number = get_hash(input_ids)
-        if hash_number in hash_dict:
-            return hash_dict[hash_number]
-        return []
-        
-    def prefix_allowed_tokens_fn_title(batch_id, input_ids):
-        hash_number = get_hash(input_ids)
-        if hash_number in hash_dict_title:
-            return hash_dict_title[hash_number]
-        return []
-
-    # Default to semantic constraints (backward compatibility)
-    prefix_allowed_tokens_fn = prefix_allowed_tokens_fn_semantic
-    # prefix_allowed_tokens_fn = prefix_allowed_tokens_fn_title
+    def prefix_allowed_tokens_fn(batch_id, input_ids):
+        return sid_tree.allowed(input_ids)
     
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -184,7 +125,7 @@ def main(
             clp = ConstrainedLogitsProcessor(
                 prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
                 num_beams=num_beams,
-                base_model=base_model,
+                prompt_lengths=maxLen,
                 eos_token_id=model.config.eos_token_id
             )
             logits_processor = LogitsProcessorList([clp])
@@ -247,8 +188,4 @@ def main(
 
 if __name__ == '__main__':
     fire.Fire(main)
-
-
-
-
 

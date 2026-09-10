@@ -1,0 +1,98 @@
+dataset: MovieLens1M
+seed: 2024
+
+paths:
+  data_root: /data
+  raw_dir: ${DATA_ROOT}/datasets/MovieLens1M/raw/ml-1m
+  processed_dir: ${DATA_ROOT}/datasets/MovieLens1M/processed
+  minionerec_dir: ${DATA_ROOT}/datasets/MovieLens1M/minionerec
+  output_dir: ${DATA_ROOT}/output/MovieLens1M
+  results_dir: ${DATA_ROOT}/results/MovieLens1M
+  embedding_model: Qwen/Qwen3-Embedding-0.6B
+
+download:
+  url: https://files.grouplens.org/datasets/movielens/ml-1m.zip
+  archive_name: ml-1m.zip
+  retries: 3
+  retry_delay_seconds: 3
+  minimum_archive_bytes: 1000000
+  sha256: null
+
+preprocessing:
+  user_k: 5
+  item_k: 5
+  min_rating: null
+  max_history: 10
+  split_strategy: global_time
+  train_ratio: 0.8
+  valid_ratio: 0.1
+
+embedding:
+  batch_size: 64
+  max_length: 512
+  dtype: float16
+
+rqvae:
+  device: cuda:0
+  num_emb_list: [1024, 1024, 1024]
+  e_dim: 32
+  layers: [2048, 1024, 512, 256, 128, 64]
+  loss_type: mse
+  kmeans_init: true
+  kmeans_iters: 100
+  epochs: 5000
+  batch_size: 2048
+  learning_rate: 0.001
+  save_total_limit: 2
+  # This MovieLens run finished with 3 collisions. Set to 0 for strict unique SID gating.
+  max_collisions: 3
+
+model:
+  base_model: Qwen/Qwen2.5-1.5B
+
+sft:
+  epochs: 2
+  learning_rate: 0.0003
+  batch_size: 128
+  micro_batch_size: 8
+  gradient_accumulation_steps: 16
+  max_length: 512
+  bf16: true
+  gradient_checkpointing: true
+  save_steps: 0.05
+  save_total_limit: 2
+
+# RL is an extension experiment in this repository. It is deliberately disabled by default.
+rl:
+  enabled: false
+  reward_type: ranking
+  beam_search: true
+  sync_ref_model: true
+  beta: 0.001
+  max_samples: 20000
+  epochs: 1
+  learning_rate: 0.000001
+  train_batch_size: 8
+  eval_batch_size: 8
+  gradient_accumulation_steps: 4
+  num_generations: 8
+  save_total_limit: 2
+  save_steps: 0.1
+  bf16: true
+
+# Cost-aware evaluation used for the reported SFT result.
+# sample_size=0 switches back to full-test evaluation.
+evaluation:
+  sample_size: 10000
+  sample_seed: 2024
+  cutoffs: [1, 3, 5, 10]
+  batch_size: 4
+  num_beams: 10
+  stop_on_invalid: true
+
+storage:
+  minimum_free_gb: 20
+  delete_dataset_archive_after_extract: true
+
+logging:
+  level: INFO

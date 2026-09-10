@@ -233,7 +233,7 @@ def save_indices_json(codes, path, use_prefix=True):
 def main():
     parser = argparse.ArgumentParser(
         description="FAISS-RQ + Sinkhorn uniform mapping")
-    parser.add_argument("--dataset", default="Industrial_and_Scientific")
+    parser.add_argument("--dataset", default="MovieLens1M")
     parser.add_argument("--data_path", type=str, default=None)
 
     parser.add_argument("--num_levels", type=int, default=3)
@@ -243,15 +243,17 @@ def main():
     parser.add_argument("--iters", type=int, default=30,
                         help="Sinkhorn iterations")
     parser.add_argument("--batch_size", type=int, default=8192)
-    parser.add_argument("--output_root", default="../data")
+    parser.add_argument("--output_root", default=None)
     args = parser.parse_args()
 
     if args.data_path is not None:
         data_path = args.data_path
     else:
-        data_path = f"../data/Amazon/index/{args.dataset}.emb-qwen-td.npy"
+        data_root = os.environ.get("DATA_ROOT", "/data")
+        data_path = os.path.join(data_root, "datasets", "MovieLens1M", "processed", f"{args.dataset}.emb.npy")
 
-    out_dir = os.path.join(args.output_root, args.dataset)
+    output_root = args.output_root or os.path.dirname(data_path)
+    out_dir = os.path.join(output_root, args.dataset)
     os.makedirs(out_dir, exist_ok=True)
     out_json = os.path.join(out_dir, f"{args.dataset}.faiss-rq.index.json")
     out_faiss = out_json.replace(".json", ".faiss")

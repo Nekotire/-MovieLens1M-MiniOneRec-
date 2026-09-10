@@ -27,8 +27,10 @@ def parse_args():
 
     parser.add_argument('--epoch', type=int, default=500,
                         help='Number of max epochs.')
-    parser.add_argument('--data', nargs='?', default='Goodreads_5',
-                        help='Toys_and_Games, Goodreads, Industrial_and_Scientific, CDs_and_Vinyl')
+    parser.add_argument('--data', nargs='?', default='MovieLens1M',
+                        help='Dataset filename prefix (default: MovieLens1M)')
+    parser.add_argument('--data_root', type=str, default=None,
+                        help='MiniOneRec dataset root; defaults to DATA_ROOT/datasets/MovieLens1M/minionerec')
     # parser.add_argument('--pretrain', type=int, default=1,
     #                     help='flag for pretrain. 1: initialize from pretrain; 0: randomly initialize; -1: save the model to pretrain file')
     parser.add_argument('--batch_size', type=int, default=1024,
@@ -597,10 +599,12 @@ if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda)
     setup_seed(args.seed)
 
-    data_directory_train = './data/Amazon/train/'
-    data_directory_test = './data/Amazon/test/'
-    data_directory_valid = './data/Amazon/valid/' 
-    data_directory_info = './data/Amazon/info/'
+    minionerec_root = args.data_root or os.path.join(
+        os.environ.get("DATA_ROOT", "/data"), "datasets", "MovieLens1M", "minionerec")
+    data_directory_train = os.path.join(minionerec_root, 'train')
+    data_directory_test = os.path.join(minionerec_root, 'test')
+    data_directory_valid = os.path.join(minionerec_root, 'valid')
+    data_directory_info = os.path.join(minionerec_root, 'info')
     # data = pd.read_csv(data_directory + '/train/train.csv')
     # find the one csv file with arg.data in the name
     data_file_train = [f for f in os.listdir(data_directory_train) if args.data in f and f.endswith('.csv')]
@@ -652,4 +656,3 @@ if __name__ == '__main__':
     torch.save(best_model.state_dict(), result_folder + f"/best_{args.data}_{args.model}_emb{args.hidden_factor}_bs{args.batch_size}_lr{args.lr}_decay{args.l2_decay}_seed{args.seed}_loss_{args.loss_type}_dropout{args.dropout_rate}_state.pth")
 
     evaluate_games(best_model, data_file_test, device, topk, save_logits=True, eval_type="test")
-

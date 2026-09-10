@@ -1,5 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+DATA_ROOT="${DATA_ROOT:-/data}"
+DATASET="${DATASET:-MovieLens1M}"
+PROCESSED_DIR="${PROCESSED_DIR:-$DATA_ROOT/datasets/MovieLens1M/processed}"
+: "${RQKMEANS_PLUS_CHECKPOINT:?Set RQKMEANS_PLUS_CHECKPOINT to the trained checkpoint path}"
+
 python generate_indices_plus.py \
-  --data_path ../data/Amazon18/Industrial_and_Scientific/Industrial_and_Scientific.emb-qwen-td.npy \
-  --ckpt_path your_best_collision_model_path: e.g. /Nov-20-2025_12-25-13/best_collision_model.pth \
+  --data_path "${EMBEDDING_PATH:-$PROCESSED_DIR/$DATASET.emb.npy}" \
+  --ckpt_path "$RQKMEANS_PLUS_CHECKPOINT" \
   --num_emb_list 256 256 256 \
-  --device cuda:0
+  "$@"

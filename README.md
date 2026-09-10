@@ -1,366 +1,164 @@
-<div align="center">
+# MiniOneRec on MovieLens-1M
 
+这个仓库把 [MiniOneRec](https://arxiv.org/abs/2510.24431) 的生成式推荐链路迁到了 MovieLens-1M，并完成了一次真实的 SFT 训练与离线评估。
 
-<img src="./assets/logo.png" width="500em" ></img> 
+当前进度很明确：**SFT 已跑完，RL 没跑。** RL 代码和实验方案保留在仓库里，后面有算力时可以从 SFT checkpoint 继续，不需要重训 SFT。
 
-**An Open-Source Framework for
-Scaling Generative Recommendation**
+## 先看结果
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)
-<a href="https://arxiv.org/abs/2510.24431"><img src="https://img.shields.io/static/v1?label=arXiv&message=Paper&color=red"></a>
+本次实验使用 MovieLens-1M，按时间做 80/10/10 切分；SFT 训练完整跑了 2 个 epoch。为了控制评估成本，没有对约 9.9 万条 Test 全量做 50-beam 解码，而是在已经划分好的 Test 中用 `seed=2024` 固定抽取 10,000 条，使用 constrained beam search，`num_beams=10`。
 
-<a href="https://arxiv.org/abs/2510.24431">📄 Technical Report</a> | <a href="https://huggingface.co/kkknight/MiniOneRec">🤗 Huggingface</a> | <a href="https://modelscope.cn/models/k925238839/MiniOneRec">🤖  Modelscope</a>
-</div>
+| 指标 | 结果 |
+| --- | ---: |
+| HR@1 | 0.0121 |
+| HR@3 | 0.0356 |
+| HR@5 | 0.0603 |
+| **HR@10** | **0.1135** |
+| NDCG@1 | 0.0121 |
+| NDCG@3 | 0.0256 |
+| NDCG@5 | 0.0357 |
+| **NDCG@10** | **0.0528** |
+| invalid item count | **0** |
 
-**MiniOneRec** is the first fully open-source **generative recommendation** framework, which provides an end-to-end workflow spanning **SID construction**, **supervised fine-tuning (SFT)**, and recommendation-oriented **reinforcement learning (RL)**. 
+这里没有训练 SASRec、GRU4Rec 之类的 learned baseline，所以我不把这组数写成“优于某模型”。为了确认模型不是随机生成，给一个最简单的随机参照：过滤后 Item 数是 3416，如果从全 Item 集均匀随机取 K 个不同物品，单目标任务的期望 `HR@K = K / 3416`。
 
----
+| K | 本项目 HR@K | 均匀随机 HR@K | 本项目 / 随机期望 |
+| ---: | ---: | ---: | ---: |
+| 1 | 1.21% | 0.0293% | 41.3× |
+| 3 | 3.56% | 0.0878% | 40.5× |
+| 5 | 6.03% | 0.1464% | 41.2× |
+| 10 | **11.35%** | **0.2927%** | **38.8×** |
 
-## 📢 Announcement
+这个随机值只是 sanity check，不是正式模型 baseline。它能说明 SFT 学到了明显高于随机的用户序列信号，但不能说明模型已经超过成熟的序列推荐方法。
 
-- 2026-05-13 — We have introduced the new TS-Rec codebase, following the method proposed in [Fine-grained Semantics Integration for Large Language Model-based Recommendation](https://arxiv.org/pdf/2602.22632). We sincerely thank the contributors for their valuable efforts and support in making this update available.
+完整实验记录见 [`experiments/20260910_sft/`](experiments/20260910_sft/README.md)。
 
-- 2026-01-04 — Regarding the potential discrepancies between the reproduced results based on the Instruct model and our reported metrics, please check whether the CC metric in the evaluation log is non-zero (refer to calc.py). If it is non-zero, it indicates that the model is still generating a large number of invalid items, and constrained decoding has not been successful. We suspect this issue may be related to the versions of dependencies such as the transformer library, and we are still investigating the cause to provide a universal solution. In the meantime, you may switch the Instruct model to a base model, such as Qwen2.5-base, to avoid this problem.
+## 这个项目具体做了什么
 
-- 2025-12-04 — We update new scripts to support processing the Amazon23 dataset.
+这个仓库不是简单把原项目的数据集名字换成 MovieLens。相对 upstream，主要工作集中在下面几块。
 
-- 2025-12-01 — We fix a bug in data.py that could cause the SID–item alignment task to see the answers in advance. This was because we had previously attempted to use partial trajectories to guide the full SID–item generation and does not affect the model performance.
+**1. 把 MovieLens-1M 接进生成式推荐链路。** 直接读取 GroupLens 的 `ratings.dat / movies.dat / users.dat`，对 user/item 做迭代 5-core，按时间构造 next-item 样本，再做全局时间 80/10/10 切分。模型输入只使用交互历史和电影的标题、类别信息；`users.dat` 里的性别、年龄、职业等人口属性没有喂给模型。
 
-- 2025-11-20 — The SID construction method in **RQ-Kmeans+** has been updated (first proposed in **GPR** and this is the first open-source reproduction).
+**2. 重新构造 Item Semantic ID。** 电影标题与 genres 先经过 Qwen3-Embedding-0.6B 得到 1024 维语义向量，再用三层 RQ-VAE 压成 `<a_x><b_y><c_z>`。实际训练中依次试了 `[256,256,256]`、`[512,512,512]`、`[1024,1024,1024]` 三组码本，SID collision 从 13 降到 6，再降到 3。最后 3416 个 Item 得到 3413 个唯一 SID，collision rate 为 0.000878。
 
-- 2025-11-19 — We implemented a multi-GPU parallel text-to-embedding method based on Accelerate, which is significantly more efficient than the original version: rq/text2emb/amazon_text2emb.py
+**3. 跑通完整 SFT，而不是只做数据和脚本适配。** Base model 使用 Qwen2.5-1.5B，历史长度最多 10，训练样本 794,856 条，2 epoch。在 A800 80GB 上把 micro batch 从 4 调到 8，同时把 gradient accumulation 从 32 调到 16，effective batch 仍然保持 128。服务器日志中单步训练速度从前一版约 3.6 s/it 降到后续约 2.1–2.4 s/it。最终 SFT runtime 约 16 小时 54 分钟，Trainer 报告 train loss 0.6962。
 
-- 2025-11-19 — The SID construction method in **constrained-RQ-Kmeans** has been updated.
+**4. 把生成结果限制在合法 Item 空间。** Evaluation 不是让 LLM 自由输出字符串，而是根据全部合法 SID 构造 prefix tree，在解码阶段做约束。最终 10k 评估里 `invalid_item_count=0`。注意代码里的 `CC` 表示非法预测计数，不是前面 RQ-VAE 的 SID collision，两者不要混在一起。
 
-- 2025-11-07 — Thank you for submitting issues! Based on your feedback, we have released a new implementation. If you encounter any problems while running the code, please update to and consult the **latest version** first.
-  
-- 2025-11-07 — You can now choose to freeze the LLM parameters during the SFT stage and train only the embeddings for the newly added SID vocabulary.
+**5. 把长时间实验做成可恢复的工程链路。** `run.sh` / `scripts/pipeline.py` 负责数据、Embedding、RQ-VAE、SID、SFT、Evaluation 和可选 RL；每个阶段有真实输出校验和恢复逻辑，SFT/RL 可以从最新 checkpoint 继续。数据、模型、cache、checkpoint 默认放在独立数据盘，不塞进 Git 仓库。
 
-- 2025-10-31 — You can now directly download the implementation **checkpoints** of our MiniOnRec model.
+## 数据是怎么变成训练样本的
 
-- 2025-10-31 — The SID construction method in **RQ-Kmeans** has been updated.
+原始 MovieLens-1M 大约有 100 万条评分记录。本项目把评分记录当作用户与电影的交互，不把评分值本身作为排序特征。处理后数据统计如下：
 
----
+```text
+6040 users
+3416 items
+999611 interactions after iterative 5-core
 
-## 🛠️ Key Techniques 
-<div align="center">
-<img src="./assets/minionerec_framework.png" width=100% ></img> 
-</div>
+794856 train samples
+ 99357 valid samples
+ 99358 test samples
+```
 
-- **SID Construction: MiniOneRec begins by transforming every product into a compact, semantically meaningful token.** It concatenates an item’s title and description, feeds this sentence through a frozen text encoder, and then quantises the resulting embedding with a three-level RQ-VAE.
+对每个用户先按时间排序，然后用“历史 → 下一物品”构造样本。例如：
 
-- **SFT: With all items rewritten as SIDs, the model is first trained in a supervised fashion.** It views the chronologically ordered user history as a token sequence and learns, via next-token prediction, to generate the SID of the next product the user is likely to consume. Crucially, this stage is co-trained with a set of language-alignment objectives that map back and forth between natural language and SID space, allowing the recommender to inherit the world knowledge embedded in large language models while grounding that knowledge in discrete item codes.
+```text
+[i1]             -> i2
+[i1, i2]         -> i3
+[i1, i2, i3]     -> i4
+...
+```
 
-- **Recommendation-Oriented RL: After SFT, MiniOneRec is further polished with a recommendation-oriented RL phase based on GRPO.** Multiple candidate recommendations are generated for each prompt, their rewards are normalised within the group to stabilise gradients, and a KL penalty keeps the updated policy close to its reference. Because the action space is a closed list of item SIDs, the system switches to constrained beam search, which guarantees that every beam is unique and valid, greatly improving sampling efficiency and diversity. The reward signal itself blends a binary correctness term with a rank-aware component that penalises high-probability yet incorrect items more heavily, and can be augmented with collaborative-filtering scores. Together, this pipeline enables MiniOneRec to couple dense linguistic knowledge, achieving a high-performance, lightweight generative recommendation system.
+历史最多保留最近 10 个 Item。构造完成后，再按照 target timestamp 对所有样本做全局时间切分，所以 Validation/Test 的 target 都发生在 Train 之后。
 
----
+## 模型链路
 
-## 📊 Evaluation
+```text
+MovieLens-1M
+    │
+    ├─ iterative 5-core + chronological next-item samples
+    │
+    ├─ title + genres
+    │      ↓
+    │  Qwen3-Embedding-0.6B
+    │      ↓ 1024-d
+    │  RQ-VAE (3 codebooks)
+    │      ↓
+    │  Semantic ID: <a_x><b_y><c_z>
+    │
+user recent history (max 10)
+    │
+    ↓
+Qwen2.5-1.5B SFT
+    │
+    ↓
+constrained SID generation
+    │
+    ↓
+Top-K recommended items
+```
 
-<div align="center">
-<img src="./assets/minionerec_main_result.png" width=100% ></img> 
-</div>
+它和传统“先有候选集，再给候选打分”的排序模型不太一样。这里的 SFT 模型直接根据用户历史生成下一 Item 的 Semantic ID；beam search 输出多个合法 SID 后，自然形成 Top-K 推荐结果。因此这个项目更接近**生成式召回 / 生成式推荐**，而不是传统 CTR 精排。
 
----
-
-## 🗂️ Repository Overview
-
-| File / Directory          | Description                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `sft.sh`                  | Shell script to start the Supervised Fine-Tuning (SFT) stage                                           |
-| `sft.py`                  | Python implementation of the SFT training loop                                                            |
-| `sft_gpr.py`              | GPR-inspired SFT with Value-Aware Fine-Tuning (VAFT): implements weighted loss based on simulated item value                            |
-| `rl.sh`                   | Shell script to start the Reinforcement Learning (RL) stage                             |
-| `rl.py`                   | Python implementation of the RL training loop                                              |
-| `rl_gpr.py`               | GPR-inspired RL with Hierarchy Enhanced Policy Optimization (HEPO)                                                 |
-| `minionerec_trainer.py`   | MiniOneRec trainer — GRPO-based trainer specialized for generative recommendation                              |
-| `configs/`                | YAML configuration files                                            |
-| `evaluate.sh`     | One-click offline Top-K evaluation script                                                        |
-| `evaluate.py`     | Evaluation utilities for computing HR@K and NDCG@K.                                                           |
-| `LogitProcessor.py`                | Logit processor for constrained decoding (Python implementation)                                         |
-| `data.py`                | Data pipeline for SFT and RL training                          |
-| `convert_dataset.py`                | Converts an RQ-trained dataset to the SFT-then-RL format                                            |
-| `convert_dataset_gpr.py`           | GPR-inspired dataset converter: injects simulated heterogeneous tokens (U/E/I/O) to emulate unified input representation                                         |
-| `data/amazon18_data_process.sh`                |    Shell script to filter and preprocess Amazon18 data into an RQ-ready format                                      |
-| `data/amazon18_data_process.py`                |   Python implementation of the Amazon18 data preprocessing pipeline                                        |
-| `data/amazon18_data_process_gpr.py`            |   GPR-inspired Amazon18 preprocessing: extracts heterogeneous features for unified input representation                         |
-| `data/amazon23_data_process.sh`                |    Shell script to filter and preprocess Amazon23 data into an RQ-ready format                                      |
-| `data/amazon23_data_process.py`                |   Python implementation of the Amazon23 data preprocessing pipeline                                        |
-| `rq/text2emb/amazon_text2emb.sh`                |   Shell script to generate item embeddings (title + description) via emb_model for the Amazon dataset                                   |
-| `rq/text2emb/amazon_text2emb.py`                |   Python implementation of the above embedding generation                                         |
-| `rq/text2emb/amazon_text2emb_gpr.py`           |   GPR-inspired text-to-embedding                                 |
-| `rq/generate_indices.py`                |   Generates the SID file after training an RQ-VAE model                                       |
-| `rq/rqvae.sh`                |   Shell script to train RQ-VAE on Amazon item embeddings                        |
-| `rq/rqvae.py`                |   Python implementation of RQ-VAE training                                            |
-| `rq/rqkmeans_faiss.py`                |   Python implementation of RQ-Kmeans training based on faiss                                          |
-| `rq/rqkmeans_constrained.py`                |   Python implementation of Constrained RQ-Kmeans                         |
-| `rq/rqkmeans_constrained.sh`                |   Shell script to train constrained RQ-Kmeans constrained on Amazon item embeddings                        |
-| `rq/rqkmeans_plus.py`                |   Python implementation of RQ-Kmeans+                        |
-| `rq/rqkmeans_plus.sh`                |   Shell script to train RQ-Kmeans+ constrained on Amazon item embeddings                        |
-| `rq/generate_indices_plus.py`                |   Generates the SID file after training an RQ-Kmeans+ model                                       |
-| `rq/generate_indices_plus.sh`                |   Shell script to generate the SID file after training an RQ-Kmeans+ model                                       |
-| `requirements.txt`        | List of Python dependencies                                                                                |
-
----
-
-## 🚀 Quickstart
-
-Use the pre-trained Industrial/Office SIDs we provide for a quick start!
-Reproduction can be achieved with just 4–8 A100/H100 GPUs.
-
-### 1. Create an isolated Python environment
+## 如何复现
 
 ```bash
-conda create -n MiniOneRec python=3.11 -y
-conda activate MiniOneRec
+git clone https://github.com/Nekotire/-MovieLens1M-MiniOneRec-.git MovieLens1M-MiniOneRec
+cd MovieLens1M-MiniOneRec
+bash setup.sh
+bash run.sh
 ```
 
-### 2. Install required packages
+默认配置在 [`config/movielens1m.yaml`](config/movielens1m.yaml)。当前默认配置对应这次已经验证过的 SFT 路径：RQ-VAE 使用 1024×3 码本、SFT micro batch 8、RL 默认关闭、Evaluation 固定抽 10k Test 并使用 beam=10。若要跑全量 Test，可把 `evaluation.sample_size` 设为 `0`，再自行提高 beam 数。
+
+中断后再次运行 `bash run.sh` 会检查已有输出并从可恢复的位置继续。只想从某个阶段开始可以使用：
 
 ```bash
-pip install -r requirements.txt
+bash run.sh --from-stage 8
 ```
 
-### 3. SFT
+## RL：保留设计，但本次没有执行
 
-```bash
-bash sft.sh
+RL 不是本次结果的一部分，仓库里也没有任何 RL 指标。当前代码的思路是：从 SFT `final_checkpoint` 出发，用 GRPO 做 recommendation-oriented post-training。`reward_type=ranking` 时同时使用 exact-hit reward 和组内排名/NDCG 风格 reward；每个 prompt 生成多个候选，在组内比较 reward，再结合 reference model / KL 约束更新 policy。
+
+为了避免“README 写得像跑过一样”，RL 的数据构造、reward、GRPO 参数、建议的 5k→20k 分阶段实验方式都单独写在 [`docs/RL_EXTENSION.md`](docs/RL_EXTENSION.md)。后续真跑之后，再补 RL vs SFT 的同协议 HR/NDCG 对比。
+
+## 仓库怎么读
+
+核心链路只需要先看这些文件：
+
+```text
+config/movielens1m.yaml              # 主配置
+data/movielens1m_data_process.py     # MovieLens 预处理
+rq/text2emb/item_text2emb.py         # Item 文本向量
+rq/rqvae.py                          # RQ-VAE 训练
+rq/generate_indices.py               # Semantic ID 生成
+convert_dataset.py                   # 转 MiniOneRec 数据格式
+sft.py                               # SFT
+minionerec_utils/constrained_decoding.py
+evaluate.py                          # constrained beam search
+scripts/evaluate_metrics.py          # HR/NDCG
+scripts/pipeline.py                  # 端到端编排
 ```
 
-### 4. Recommendation-Oriented RL
+仓库还保留了 upstream 的 GPR、TS-Rec、SASRec、RQ-Kmeans 等研究分支，默认 pipeline 不会调用。详细文件说明见 [`docs/CODE_MAP.md`](docs/CODE_MAP.md)。
 
-```bash
-bash rl.sh
-```
+## 已知限制
 
-### 5. Run the evaluation bash
+这次实验有三个边界需要提前说明。第一，没有 learned baseline，所以随机推荐只能用来确认模型明显不是随机，不能替代 SASRec 等正式对照。第二，最终 RQ-VAE 仍有 3 个 SID collision；为了控制实验时间，本次允许最多 3 个 collision 后继续 SFT，并在结果中原样保留这个事实。第三，报告的 HR/NDCG 来自 temporal Test 中固定抽取的 10,000 条，不是 99,358 条 Test 的全量评估。
 
-```bash
-bash evaluate.sh
-```
+## Acknowledgements
 
----
+本项目基于 MiniOneRec 开源代码改造，并保留原项目 Apache-2.0 License。MiniOneRec 原论文：
 
-## 📜 Full Pipeline Walk-through
-
-### 0. Prerequisites
-- GPUs: <e.g., 4–8 × A100/H100 80 GB or comparable>
-- Python: 3.11
-
-### 1. Environment Setup
-- **1.1 Clone the repo**
-```
-git clone https://github.com/AkaliKong/MiniOneRec.git
-cd MiniOneRec
-```
-- **1.2 Create and activate a conda env**
-```
-conda create -n MiniOneRec python=3.11 -y
-conda activate MiniOneRec
-```
-- **1.3 Install dependencies**
-```
-pip install -r requirements.txt
-```
-
-### 2. Data Preparation
-
-- **2.1 Download the raw dataset (Optional)**  
-  Get it from the official page:
-  [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/), 
-  [Amazon Reviews 2018](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon_v2/), 
-  [Amazon Reviews 2014](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html).
-  Note: The Industrial and Office datasets are included in Amazon 2018; the Amazon 2014 and 2023 versions require slight modifications to our data/amazon18_data_process.py.
-- **2.2 Filter and preprocess**
-```
-bash data/amazon18_data_process.sh \
-     --dataset  your_dataset_type \ # e.g. Industrial
-     --user_k 5 \
-     --item_k 5 \
-     --st_year 2017 \
-     --st_month 10 \
-     --ed_year 2018 \
-     --ed_month 11 \
-     --output_path ./data/Amazon18
-```
-- **2.3 Encode item text to embeddings**
-```
-bash rq/amazon_text2emb.sh \
-     --dataset your_dataset_type \ # e.g., Industrial 
-     --root your_processed_dataset_path \
-     --plm_name qwen \
-     --plm_checkpoint your_emb_model_path
-```
-
-### 3. SID Construction
-
-Choose either 3.1.1, 3.1.2, 3.1.3 or 3.1.4.
-
-- **3.1.1 Train RQ-VAE on the embeddings**
-```
-bash rq/rqvae.sh \
-      --data_path xxx/data/Industrial_and_Scientific/Industrial_and_Scientific.emb-qwen-td.npy \
-      --ckpt_dir ./output/Industrial_and_Scientific \
-      --lr 1e-3 \
-      --epochs 10000 \
-      --batch_size 20480
-```
-
-- **3.1.2 Train RQ-Kmeans on the embeddings**
-
-```
-conda install faiss-gpu
-python rqkmeans_faiss.py --dataset Industrial_and_Scientific # The RQ-Kmeans method based on semantic embeddings has a relatively high collision rate.
-```
-
-- **3.1.3 Train constrained RQ-Kmeans on the embeddings**
-For conflicting items, we add an extra layer to perform deduplication; meanwhile, we use a balanced constraint to ensure that the SIDs are evenly distributed.
-```
-pip install k_means_constrained
-pip install polars
-bash rqkmeans_constrained.sh
-```
-
-- **3.1.4 Train RQ-Kmeans+ on the embeddings**
-```
-pip install k_means_constrained
-pip install polars
-bash rqkmeans_constrained.sh
-bash rqkmeans_plus.sh
-```
-
-- **3.2 Generate indices(only RQ-VAE & RQ-Kmeans+ needed)**
-```
-python rq/generate_indices.py
-# or
-bash rq/generate_indices_plus.sh
-```
-
-- **3.3 Convert dataset format**
-```
-python convert_dataset.py \
-     --dataset_name Industrial_and_Scientific \
-     --data_dir /path/to/Industrial_and_Scientific \
-     --output_dir /path/to/ourput_dir \
-
-```
-
-### 4. SFT
-
-```
-bash sft.sh \
-     --base_model your_model_path \
-     --output_dir your_ourput_dir \
-     --sid_index_path your_.index.json_path \
-     --item_meta_path your_.item.json_path
-```
-
-### 5. Recommendation-Oriented RL
-> (Optional) For production-scale datasets, considering the cost of reinforcement learning and diminishing marginal returns, you can perform the RL stage using only a relatively small subset on the order of tens of thousands of samples.
-```
-bash rl.sh \
-     --model_path your_model_path \
-     --output_dir output_dir \
-```
-
-### 6. Offline Evaluation
-
-```
-bash evaluate.sh \
-     --exp_name your_model_path 
-```
-
----
-
-## 🤖 Supported LLM Providers
-
-MiniOneRec supports multiple LLM providers for text enrichment tasks (e.g., user preference and item characteristic extraction). Configure the provider in your `api_info` dictionary:
-
-| Provider | `provider` value | Default Base URL | Example Models |
-|----------|-----------------|------------------|----------------|
-| OpenAI | `"openai"` | — | `text-davinci-003` |
-| DeepSeek | `"deepseek"` | `https://api.deepseek.com` | `deepseek-chat` |
-| [MiniMax](https://www.minimaxi.com) | `"minimax"` | `https://api.minimax.io/v1` | `MiniMax-M2.7`, `MiniMax-M2.5` |
-
-**Example — using MiniMax:**
-
-```python
-api_info = {
-    "provider": "minimax",
-    "api_key_list": ["your-minimax-api-key"],
-    "base_url": "https://api.minimax.io/v1",  # optional, this is the default
-}
-get_res_batch("MiniMax-M2.7", prompt_list, max_tokens=512, api_info=api_info)
-```
-
----
-
-## 📝 Upcoming Features
-
-We are actively extending MiniOneRec’s capabilities. The following enhancements are already on our roadmap:
-* ⏱️ **More SID Construction Algorithms**: forthcoming support for R-VQ, RQ-Kmeans, RQ-OPQ, and RQ-VAE-v2 (PLUM).
-* ⚙️ **MiniOneRec-Think**: a module that seamlessly integrates dialogue, reasoning, and personalized recommendation, providing an all-in-one solution for complex interactive scenarios.
-* 🔍 **Broader Dataset Support**: additional popular public datasets, including Yelp, to further validate the generality of our algorithms.
-
----
-
-## 🏫 Institutions  <!-- omit in toc -->
-
-This project is developed by the following institutions:
-
-- <img src="assets/lds.png" width="28px"> [LDS](https://data-science.ustc.edu.cn/_upload/tpl/15/04/5380/template5380/index.html)
-- <img src="assets/alphalab.jpg" width="28px"> [AlphaLab](https://alphalab-ustc.github.io/index.html)
-- <img src="assets/next.jpg" width="28px"> [NExT](https://www.nextcenter.org/)
- 
----
-
-## 🧩 Contributing
-
-We welcome and appreciate all contributions! If you have ideas to improve MiniOneRec, please feel free to submit a pull request (PR).
-
----
-## 🙏 Acknowledgements
-
-This repository reuses or adapts portions of code from the following open-source projects. We gratefully acknowledge their authors and contributors:
-
-- [ReRe](https://github.com/sober-clever/ReRe)
-- [LC-Rec](https://github.com/zhengbw0324/LC-Rec)
-
----
-
-## 🔖 Citation <!-- omit in toc -->
-
-If you find our code/paper/model helpful, please consider citing our papers 📝 and staring us ⭐️！
-
-```bib
+```bibtex
 @misc{MiniOneRec,
-      title={MiniOneRec: An Open-Source Framework for Scaling Generative Recommendation}, 
-      author={Xiaoyu Kong and Leheng Sheng and Junfei Tan and Yuxin Chen and Jiancan Wu and An Zhang and Xiang Wang and Xiangnan He},
-      year={2025},
-      eprint={2510.24431},
-      archivePrefix={arXiv},
-      primaryClass={cs.IR},
+  title={MiniOneRec: An Open-Source Framework for Scaling Generative Recommendation},
+  author={Xiaoyu Kong and Leheng Sheng and Junfei Tan and Yuxin Chen and Jiancan Wu and An Zhang and Xiang Wang and Xiangnan He},
+  year={2025},
+  eprint={2510.24431},
+  archivePrefix={arXiv},
+  primaryClass={cs.IR}
 }
-
-@article{ReRe,
-      title={Reinforced Preference Optimization for Recommendation}, 
-      author={Junfei Tan and Yuxin Chen and An Zhang and Junguang Jiang and Bin Liu and Ziru Xu and Han Zhu and Jian Xu and Bo Zheng and Xiang Wang},
-      journal={arXiv preprint arXiv:2510.12211},
-      year={2025},
-}
-
-@inproceedings{RecZero,
-      title={Think before Recommendation: Autonomous Reasoning-enhanced Recommender}, 
-      author={Xiaoyu Kong and Junguang Jiang and Bin Liu and Ziru Xu and Han Zhu and Jian Xu and Bo Zheng and Jiancan Wu and Xiang Wang},
-      year={2025},
-      booktitle={NeurIPS},
-}
-
 ```
-
----
-
-<div align="center">
-We welcome contributions from the community! 🤝
-</div>

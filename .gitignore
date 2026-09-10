@@ -1,0 +1,39 @@
+# Runtime state
+.state/
+.data_root
+*.log
+*.tmp
+*.part
+*.before_*
+
+# Python / local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+envs/
+
+# Raw/downloaded/generated data
+datasets/
+downloads/
+data/MovieLens1M/
+ml-1m.zip
+
+# Models, caches, arrays and checkpoints
+models/
+huggingface/
+.cache/
+*.npy
+checkpoint*/
+output/
+outputs/
+wandb/
+
+# Runtime evaluation output. Curated, reproducible metrics live in experiments/.
+results/
+
+# Local archives / backups
+*.tar
+*.tar.gz
+*.tgz

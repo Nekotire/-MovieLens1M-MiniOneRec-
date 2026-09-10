@@ -1,4 +1,6 @@
 import os
+os.environ["WANDB_DISABLED"] = "true"
+os.environ["WANDB_MODE"] = "disabled"
 import sys
 from typing import List
 import numpy as np 
@@ -17,6 +19,7 @@ import numpy as np
 import fire
 import transformers
 from torch.optim.lr_scheduler import LambdaLR
+from minionerec_utils.dataset_config import category_name
 import json
 import torch.nn as nn
 import bitsandbytes as bnb
@@ -109,20 +112,24 @@ def train(
     wandb_project: str = "",
     wandb_run_name: str = "",
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
-    category: str="",
+    category: str="MovieLens1M",
     train_from_scratch: bool = False,
     sid_index_path: str = "",
     item_meta_path: str = "",
+    save_total_limit: int = 2,
+    gradient_checkpointing: bool = True,
+    bf16: bool = True,
+    save_steps: float = 0.05,
+    gradient_accumulation_steps: int = 0,
 ):
     set_seed(seed)
     os.environ['WANDB_PROJECT'] = wandb_project
-    category_dict = {"Industrial_and_Scientific": "industrial and scientific items", "Office_Products": "office products", "Toys_and_Games": "toys and games", "Sports": "sports and outdoors", "Books": "books"}
     print(category)
-    category = category_dict[category]
+    category = category_name(category)
     assert (
         base_model
     ), "Please specify a --base_model, e.g. --base_model='decapoda-research/llama-7b-hf'"
-    gradient_accumulation_steps = batch_size // micro_batch_size
+    gradient_accumulation_steps = gradient_accumulation_steps or (batch_size // micro_batch_size)
     
     device_map = "auto"
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -206,11 +213,6 @@ def train(
     # val_data = SFTData(train_file=eval_file, tokenizer=tokenizer, max_len=cutoff_len,  sample=20000, seed=seed, category=category)
     print("LOAD DATA FINISHED")    
     
-    if resume_from_checkpoint:
-        checkpoint_name = os.path.join(
-            resume_from_checkpoint, "pytorch_model.bin"
-        )  # Full checkpoint
-
     if not ddp and torch.cuda.device_count() > 1:
         model.is_parallelizable = True
         model.model_parallel = True
@@ -223,7 +225,7 @@ def train(
 
     print(hf_train_dataset)
     print(hf_val_dataset)
-    eval_step = 0.05
+    eval_step = save_steps
     trainer = transformers.Trainer(
         # deepspeed=deepspeed,
         model=model,
@@ -238,7 +240,7 @@ def train(
             warmup_steps=20,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
-            bf16=True,
+            bf16=bf16,
             logging_steps=1,
             optim="adamw_torch",
             eval_strategy="steps",
@@ -246,11 +248,12 @@ def train(
             save_strategy="steps",
             save_steps=eval_step,
             output_dir=output_dir,
-            save_total_limit=1,
+            save_total_limit=save_total_limit,
+            gradient_checkpointing=gradient_checkpointing,
             load_best_model_at_end=True,
             ddp_find_unused_parameters=False if ddp else None,
             group_by_length=group_by_length,
-            report_to=None,
+            report_to="none",
         ),
         data_collator=transformers.DataCollatorForSeq2Seq(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
@@ -261,11 +264,10 @@ def train(
     model.config.use_cache = False
     
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
-    trainer.save_model(output_dir)
-    
-    output_dir = os.path.join(output_dir, "final_checkpoint")
-    trainer.model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
+
+    final_checkpoint = os.path.join(output_dir, "final_checkpoint")
+    trainer.save_model(final_checkpoint)
+    tokenizer.save_pretrained(final_checkpoint)
 
 
 

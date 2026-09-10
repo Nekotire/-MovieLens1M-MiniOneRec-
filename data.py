@@ -477,7 +477,7 @@ class SidSFTDataset_GPR(CSVBaseDataset):
         except FileNotFoundError:
             try:
                 dataset_dir = os.path.dirname(train_file)
-                # Assuming structure data/Amazon/train/Sports... -> data/Sports/Sports.user.json
+                # Resolve optional user features relative to the configured dataset file.
                 with open(f'data/{category}/{category}.user.json', 'r') as f:
                     self.user_features = json.load(f)
             except:

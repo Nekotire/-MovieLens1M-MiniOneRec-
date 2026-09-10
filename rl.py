@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from data import D3Dataset, SidDataset, RLTitle2SidDataset, RLSeqTitle2SidDataset, RLSid2TitleDataset, RLSidhis2TitleDataset
 from torch.utils.data import ConcatDataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 import os
 from minionerec_trainer import ReReTrainer
 from sasrec import SASRec
@@ -14,8 +14,11 @@ import pickle
 import math
 import json
 from sklearn.metrics import ndcg_score
+from minionerec_utils.dataset_config import category_name
+from minionerec_utils.rl_data import deterministic_sample_csv
 
 os.environ['WANDB_MODE'] = 'disabled'
+os.environ['WANDB_DISABLED'] = 'true'
 
 def set_seed(seed):
     random.seed(seed)
@@ -34,7 +37,7 @@ def train(
     train_file: str = "",
     eval_file: str = "",
     info_file: str = "",
-    category: str = "",
+    category: str = "MovieLens1M",
     
     # wandb params
     wandb_project: str = "",
@@ -51,14 +54,14 @@ def train(
     num_generations: int = 16,
     num_train_epochs: int = 1,
     learning_rate: float = 1e-6,
-    beta: float = 0.04,
-    beam_search: bool = False,
+    beta: float = 0.001,
+    beam_search: bool = True,
     test_during_training: bool = True,
     dynamic_sampling: bool = False,
     mask_all_zero: bool = False,
-    sync_ref_model: bool = False,
+    sync_ref_model: bool = True,
     test_beam: int = 20,
-    reward_type: str = "rule",
+    reward_type: str = "ranking",
     sample_train: bool = False,
     ada_path: str = "",
     cf_path: str = "",
@@ -66,13 +69,21 @@ def train(
     item_meta_path: str = "",
     dapo: bool = False,
     gspo: bool = False,
+    max_samples: int = 20000,
+    save_total_limit: int = 2,
+    save_steps: float = 0.1,
+    bf16: bool = True,
+    resume_from_checkpoint: str = None,
 ):
     torch.backends.cuda.enable_flash_sdp(False)  
     torch.backends.cuda.enable_mem_efficient_sdp(False)
     set_seed(seed)
+    supported_rewards = {"rule", "ranking", "ranking_only", "semantic", "sasrec"}
+    if reward_type not in supported_rewards:
+        raise ValueError(f"Unsupported reward_type={reward_type!r}; choose from {sorted(supported_rewards)}")
     
-    category_dict = {"Industrial_and_Scientific": "industrial and scientific items", "Office_Products": "office products", "Toys_and_Games": "toys and games", "Sports": "sports and outdoors", "Books": "books"}
     print(category)
+    readable_category = category_name(category)
     
     
     with open(info_file, 'r') as f:
@@ -82,26 +93,32 @@ def train(
         item2id = {name: i for i, name in enumerate(item_name)}
 
     sample = -1
+    sampled_train_file, sampled_count, source_count = deterministic_sample_csv(
+        train_file, os.path.join(output_dir, "sampled_train.csv"), max_samples, seed
+    )
+    if sampled_count >= 0:
+        print(f"Deterministically sampled {sampled_count} of {source_count} raw RL training rows before prompt construction")
+    sampled_train_file = str(sampled_train_file)
     train_datasets = []
-    # train_data = D3Dataset(train_file, category=category_dict[category], sample=sample)
+    # train_data = D3Dataset(train_file, category=readable_category, sample=sample)
     # train_datasets.append(train_data)
-    train_data1 = SidDataset(train_file, category=category_dict[category], sample=sample)
+    train_data1 = SidDataset(sampled_train_file, category=readable_category, sample=sample)
     train_datasets.append(train_data1)
-    train_data2 = RLTitle2SidDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    train_data2 = RLTitle2SidDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     train_datasets.append(train_data2)
-    train_data3 = RLSeqTitle2SidDataset(train_file, category=category_dict[category], sample=10000)
+    train_data3 = RLSeqTitle2SidDataset(sampled_train_file, category=readable_category, sample=sample)
     train_datasets.append(train_data3)
-    # train_data4 = RLSid2TitleDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data4 = RLSid2TitleDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data4)
-    # train_data5 = RLSidhis2TitleDataset(train_file, item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data5 = RLSidhis2TitleDataset(train_file, item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data5)
-    # train_data6 = RLTitle2Sid_1LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data6 = RLTitle2Sid_1LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data6)
-    # train_data7 = RLTitle2Sid_2LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data7 = RLTitle2Sid_2LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data7)
     train_data = ConcatDataset(train_datasets)
-    # eval_data = D3Dataset(eval_file, category=category_dict[category], sample=sample)
-    eval_data = SidDataset(eval_file, category=category_dict[category], sample=sample)
+    # eval_data = D3Dataset(eval_file, category=readable_category, sample=sample)
+    eval_data = SidDataset(eval_file, category=readable_category, sample=sample)
 
     train_dataset = Dataset.from_dict({k : [elm[k] for elm in train_data] for k in train_data[0].keys()})
     train_dataset = train_dataset.shuffle(seed=seed) 
@@ -133,9 +150,8 @@ def train(
     print("train_dataset: ", train_dataset)
     print("eval_dataset: ", eval_dataset)
 
-    llm_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto")
-    device = llm_model.device
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     
     len_seq = 10
     item_num = len(item_name)
@@ -149,9 +165,7 @@ def train(
     if reward_type == "semantic":
         with open(ada_path, "rb") as f:
             item_ada_embd = pickle.load(f)
-        item_ada_embd = torch.tensor(item_ada_embd).to(llm_model.device)
-
-    print("Load item_ada_embd successfully.")
+        item_ada_embd = torch.tensor(item_ada_embd).to(device)
 
     ndcg_rewards = [-1.0/math.log2(i+2) for i in range(num_generations)]
     ndcg_rewards = [-elm/sum(ndcg_rewards) for elm in ndcg_rewards]
@@ -257,12 +271,9 @@ def train(
     elif reward_type == "sasrec":
         reward_fun = cf_reward
     
-    os.environ['WANDB_PROJECT'] = wandb_project
-    os.environ["WANDB_MODE"] = "offline"
-
     training_args = GRPOConfig(output_dir=output_dir,
-                                save_steps=0.1,
-                                save_total_limit=20,
+                                save_steps=save_steps,
+                                save_total_limit=save_total_limit,
                                 eval_strategy="steps",
                                 max_completion_length=128,
                                 num_generations=num_generations,
@@ -278,11 +289,11 @@ def train(
                                 warmup_ratio=0.03,
                                 max_grad_norm= 0.3,
                                 num_train_epochs=num_train_epochs,
-                                bf16=True,
+                                bf16=bf16,
                                 optim="paged_adamw_32bit",
                                 lr_scheduler_type="cosine", 
                                 save_strategy="steps",
-                                report_to="wandb",
+                                report_to="none",
                                 run_name=wandb_run_name,
                             )
     trainer = ReReTrainer(
@@ -304,13 +315,11 @@ def train(
         args=training_args,
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
-    trainer.save_model(output_dir)
-
-    output_dir = os.path.join(output_dir, "final_checkpoint")
-    trainer.model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
+    final_checkpoint = os.path.join(output_dir, "final_checkpoint")
+    trainer.save_model(final_checkpoint)
+    tokenizer.save_pretrained(final_checkpoint)
     
 if __name__ == "__main__":
     Fire(train)

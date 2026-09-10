@@ -93,7 +93,8 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
     parser.add_argument('--batch_size', type=int, default=2048, help='batch size')
     parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument("--data_path", type=str, default="../data/Games/Games.emb-llama-td.npy")
+    parser.add_argument("--data_path", type=str, required=True,
+                        help="MovieLens1M embedding file produced by item_text2emb.py")
     parser.add_argument("--pretrained_codebook_path", type=str, required=True, 
                         help="Path to RQ-KMeans npz file")
     

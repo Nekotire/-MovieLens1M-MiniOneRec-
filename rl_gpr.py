@@ -14,6 +14,7 @@ import pickle
 import math
 import json
 from sklearn.metrics import ndcg_score
+from minionerec_utils.dataset_config import category_name
 import re
 
 os.environ['WANDB_MODE'] = 'disabled'
@@ -35,7 +36,7 @@ def train(
     train_file: str = "",
     eval_file: str = "",
     info_file: str = "",
-    category: str = "",
+    category: str = "MovieLens1M",
     
     # wandb params
     wandb_project: str = "",
@@ -72,8 +73,8 @@ def train(
     torch.backends.cuda.enable_mem_efficient_sdp(False)
     set_seed(seed)
     
-    category_dict = {"Industrial_and_Scientific": "industrial and scientific items", "Office_Products": "office products", "Toys_and_Games": "toys and games", "Sports": "sports and outdoors", "Books": "books"}
     print(category)
+    readable_category = category_name(category)
     
     
     with open(info_file, 'r') as f:
@@ -122,25 +123,25 @@ def train(
 
     sample = -1
     train_datasets = []
-    # train_data = D3Dataset(train_file, category=category_dict[category], sample=sample)
+    # train_data = D3Dataset(train_file, category=readable_category, sample=sample)
     # train_datasets.append(train_data)
-    train_data1 = SidDataset(train_file, category=category_dict[category], sample=sample)
+    train_data1 = SidDataset(train_file, category=readable_category, sample=sample)
     train_datasets.append(train_data1)
-    train_data2 = RLTitle2SidDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    train_data2 = RLTitle2SidDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     train_datasets.append(train_data2)
-    train_data3 = RLSeqTitle2SidDataset(train_file, category=category_dict[category], sample=10000)
+    train_data3 = RLSeqTitle2SidDataset(train_file, category=readable_category, sample=10000)
     train_datasets.append(train_data3)
-    # train_data4 = RLSid2TitleDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data4 = RLSid2TitleDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data4)
-    # train_data5 = RLSidhis2TitleDataset(train_file, item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data5 = RLSidhis2TitleDataset(train_file, item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data5)
-    # train_data6 = RLTitle2Sid_1LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data6 = RLTitle2Sid_1LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data6)
-    # train_data7 = RLTitle2Sid_2LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=category_dict[category], sample=sample)
+    # train_data7 = RLTitle2Sid_2LayerDataset(item_file=item_meta_path, index_file=sid_index_path, category=readable_category, sample=sample)
     # train_datasets.append(train_data7)
     train_data = ConcatDataset(train_datasets)
-    # eval_data = D3Dataset(eval_file, category=category_dict[category], sample=sample)
-    eval_data = SidDataset(eval_file, category=category_dict[category], sample=sample)
+    # eval_data = D3Dataset(eval_file, category=readable_category, sample=sample)
+    eval_data = SidDataset(eval_file, category=readable_category, sample=sample)
 
     train_dataset = Dataset.from_dict({k : [elm[k] for elm in train_data] for k in train_data[0].keys()})
     train_dataset = train_dataset.shuffle(seed=seed) 
